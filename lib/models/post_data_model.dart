@@ -7,13 +7,12 @@ class PostDataModel {
   final String profileImageUrl;
   final String postText;
   final String? postImageUrl;
+  final String? videoUrl;
   final Timestamp postTime;
 
-  // final int likesCount; // REMOVED - Handled by subcollection
-  final int sharesCount; // Keep if you manage it directly on the post
-  // final List<CommentModel> comments; // REMOVED - Handled by subcollection
-  final String userId; // Author's UID
-  final String documentId; // Firestore document ID - VERY IMPORTANT
+  final int sharesCount;
+  final String userId;
+  final String documentId;
 
   PostDataModel({
     required this.postId,
@@ -21,6 +20,7 @@ class PostDataModel {
     required this.profileImageUrl,
     required this.postText,
     this.postImageUrl,
+    this.videoUrl,
     required this.postTime,
     required this.sharesCount,
     required this.userId,
@@ -34,27 +34,26 @@ class PostDataModel {
       'profileImageUrl': profileImageUrl,
       'postText': postText,
       'postImageUrl': postImageUrl,
+      'videoUrl': videoUrl,
       'postTime': postTime,
       'sharesCount': sharesCount,
       'userId': userId,
       'documentId': documentId,
-      // Make sure this is saved if you need it later
-      // though often the Firestore doc.id is the source of truth
     };
   }
 
   factory PostDataModel.fromMap(Map<String, dynamic> map, String documentId) {
     return PostDataModel(
       postId: map['postId'],
-      // Adjust type casting if needed (e.g., as int? ?? 0)
       username: map['username'] as String? ?? 'Anonymous',
       profileImageUrl: map['profileImageUrl'] as String? ?? '',
       postText: map['postText'] as String? ?? '',
       postImageUrl: map['postImageUrl'] as String?,
+      videoUrl: map['videoUrl'] as String?,
       postTime: map['postTime'] as Timestamp? ?? Timestamp.now(),
       sharesCount: map['sharesCount'] as int? ?? 0,
       userId: map['userId'] as String? ?? '',
-      documentId: documentId, // Assign the passed document ID
+      documentId: documentId,
     );
   }
 }

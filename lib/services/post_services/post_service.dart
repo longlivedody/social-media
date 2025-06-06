@@ -42,6 +42,7 @@ class PostService {
   Future<void> createPost({
     required String postText,
     String? postImageUrl,
+    String? videoUrl,
     required User user,
   }) async {
     if (postText.trim().isEmpty) {
@@ -61,6 +62,7 @@ class PostService {
         profileImageUrl: user.photoURL ?? '',
         postText: postText.trim(),
         postImageUrl: postImageUrl ?? '',
+        videoUrl: videoUrl,
         postTime: Timestamp.now(),
         sharesCount: 0,
         userId: user.uid,
@@ -263,6 +265,7 @@ class PostService {
     required String userId,
     required String postText,
     String? postImageUrl,
+    String? videoUrl,
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
@@ -286,6 +289,7 @@ class PostService {
       await postRef.update({
         'postText': postText.trim(),
         if (postImageUrl != null) 'postImageUrl': postImageUrl,
+        if (videoUrl != null) 'videoUrl': videoUrl,
       });
     });
   }

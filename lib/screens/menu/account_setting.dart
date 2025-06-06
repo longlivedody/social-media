@@ -7,6 +7,7 @@ import 'package:facebook_clone/widgets/custom_text_field.dart';
 import 'package:flutter/material.dart';
 import 'package:facebook_clone/utils/image_picker_utils.dart';
 import 'package:facebook_clone/utils/image_utils.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../../models/user_model.dart';
 import '../../services/auth_services/auth_service.dart';
@@ -32,6 +33,7 @@ class _AccountSettingState extends State<AccountSetting> {
   final TextEditingController _oldPasswordController = TextEditingController();
 
   bool _isLoading = false;
+  bool _isInitialLoading = true;
   bool _obscureText = true;
   String? _errorMessage;
   File? _newProfileImage;
@@ -45,13 +47,25 @@ class _AccountSettingState extends State<AccountSetting> {
   }
 
   Future<void> _initializeControllers() async {
-    final user = await widget.authService.currentUser;
-    if (user != null) {
+    try {
+      final user = await widget.authService.currentUser;
+      if (user != null) {
+        setState(() {
+          _currentUser = user;
+          _displayNameController.text = user.displayName ?? '';
+          _emailController.text = user.email ?? '';
+        });
+      }
+    } catch (e) {
       setState(() {
-        _currentUser = user;
-        _displayNameController.text = user.displayName ?? '';
-        _emailController.text = user.email ?? '';
+        _errorMessage = 'Failed to load user data: $e';
       });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+        });
+      }
     }
   }
 
@@ -201,7 +215,7 @@ class _AccountSettingState extends State<AccountSetting> {
       child: Stack(
         children: [
           CircleAvatar(
-            radius: 50,
+            radius: 90,
             backgroundColor: Colors.grey[300],
             backgroundImage: _newProfileImage != null
                 ? FileImage(_newProfileImage!)
@@ -282,14 +296,134 @@ class _AccountSettingState extends State<AccountSetting> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildShimmerProfileImage() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: CircleAvatar(
+        radius: 90,
+        backgroundColor: Colors.white,
+      ),
+    );
+  }
+
+  Widget _buildShimmerTextField() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Container(
+        height: 50,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmerLoading() {
     return Scaffold(
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 5),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  _buildHeader(),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _buildShimmerProfileImage(),
+              const SizedBox(height: 20),
+              _buildShimmerTextField(),
+              const SizedBox(height: 25),
+              _buildShimmerTextField(),
+              const SizedBox(height: 20),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      width: 120,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  _buildShimmerTextField(),
+                  const SizedBox(height: 15),
+                  _buildShimmerTextField(),
+                ],
+              ),
+              const SizedBox(height: 25),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                child: CustomButton(
+                  onPressed: _isLoading ? null : _updateProfile,
+                  text: _isLoading ? 'Updating...' : 'Update',
+                  style: const ButtonStyle(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0),
+      child: ElevatedButton(
+        onPressed: _updateProfile,
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 50),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        child: _isLoading
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Updating...'),
+                ],
+              )
+            : const Text('Update'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isInitialLoading) {
+      return _buildShimmerLoading();
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               _buildHeader(),
               const SizedBox(height: 20),
@@ -308,14 +442,7 @@ class _AccountSettingState extends State<AccountSetting> {
                 ),
               ],
               const SizedBox(height: 25),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                child: CustomButton(
-                  onPressed: _isLoading ? null : _updateProfile,
-                  text: _isLoading ? 'Updating...' : 'Update',
-                  style: const ButtonStyle(),
-                ),
-              ),
+              _buildUpdateButton(),
             ],
           ),
         ),

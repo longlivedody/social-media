@@ -142,7 +142,10 @@ class _PostsScreenState extends State<PostsScreen>
           );
         }
 
-        return _PostsListView(posts: posts);
+        return _PostsListView(
+          posts: posts,
+          onRefresh: _refreshPosts,
+        );
       },
     );
   }
@@ -154,8 +157,12 @@ class _PostsScreenState extends State<PostsScreen>
 /// A widget that displays a list of posts with separators
 class _PostsListView extends StatelessWidget {
   final List<PostDataModel> posts;
+  final VoidCallback onRefresh;
 
-  const _PostsListView({required this.posts});
+  const _PostsListView({
+    required this.posts,
+    required this.onRefresh,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -165,7 +172,10 @@ class _PostsListView extends StatelessWidget {
         parent: AlwaysScrollableScrollPhysics(),
       ),
       itemCount: posts.length,
-      itemBuilder: (context, index) => PostItem(postData: posts[index]),
+      itemBuilder: (context, index) => PostItem(
+        postData: posts[index],
+        onPostDeleted: onRefresh,
+      ),
     );
   }
 

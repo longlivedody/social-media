@@ -3,17 +3,25 @@ import 'package:facebook_clone/models/post_data_model.dart';
 import 'package:facebook_clone/services/auth_services/auth_service.dart'; // For AuthService
 import 'package:facebook_clone/services/post_services/post_service.dart'; // Your PostService
 import 'package:facebook_clone/utils/image_utils.dart';
+import 'package:facebook_clone/utils/video_utils.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 
 import 'comments_modal_sheet.dart'; // Your comments modal
 import 'update_post_screen.dart'; // Import the UpdatePostScreen
 
 class PostItem extends StatefulWidget {
   final PostDataModel postData;
+  final VoidCallback? onPostDeleted;
 
-  const PostItem({super.key, required this.postData});
+  const PostItem({
+    super.key,
+    required this.postData,
+    this.onPostDeleted,
+  });
 
   @override
   State<PostItem> createState() => _PostItemState();
@@ -26,6 +34,10 @@ class _PostItemState extends State<PostItem> {
   Stream<int>? _likesCountStream;
   Stream<bool>? _userLikeStatusStream;
   bool _isDeleting = false;
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+  bool _isVideoInitialized = false;
+  bool _isInitializing = false;
 
   @override
   void initState() {
@@ -54,6 +66,80 @@ class _PostItemState extends State<PostItem> {
     } else {
       debugPrint(
           "Error: PostItem received postData with empty documentId. Post ID (custom): ${widget.postData.postId}");
+    }
+
+    // Initialize video if URL exists
+    if (widget.postData.videoUrl != null &&
+        widget.postData.videoUrl!.isNotEmpty) {
+      _initializeVideo();
+    }
+  }
+
+  Future<void> _initializeVideo() async {
+    if (_isInitializing || _isVideoInitialized) return;
+
+    setState(() {
+      _isInitializing = true;
+    });
+
+    try {
+      if (_videoController != null) {
+        _videoController!.dispose();
+        _videoController = null;
+      }
+      if (_chewieController != null) {
+        _chewieController!.dispose();
+        _chewieController = null;
+      }
+
+      _videoController =
+          await VideoUtils.getVideoController(widget.postData.videoUrl!);
+      await _videoController!.initialize();
+
+      if (!mounted) return;
+
+      _chewieController = ChewieController(
+        videoPlayerController: _videoController!,
+        autoPlay: false,
+        looping: false,
+        aspectRatio: _videoController!.value.aspectRatio,
+        placeholder: Container(
+          color: Colors.grey[300],
+          child: const Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+
+      if (mounted) {
+        setState(() {
+          _isVideoInitialized = true;
+          _isInitializing = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error initializing video: $e');
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    _chewieController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(PostItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.postData.videoUrl != widget.postData.videoUrl) {
+      _isVideoInitialized = false;
+      _initializeVideo();
     }
   }
 
@@ -151,6 +237,12 @@ class _PostItemState extends State<PostItem> {
         postId: widget.postData.documentId,
         userId: _currentUser!.uid,
       );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Post deleted successfully')),
+        );
+        widget.onPostDeleted?.call();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -253,6 +345,23 @@ class _PostItemState extends State<PostItem> {
               imageUrl: widget.postData.postImageUrl!,
               height: estimatedImageHeight,
             ),
+            const SizedBox(height: 12),
+          ],
+          if (widget.postData.videoUrl != null &&
+              widget.postData.videoUrl!.isNotEmpty) ...[
+            if (_isVideoInitialized && _chewieController != null)
+              AspectRatio(
+                aspectRatio: _videoController!.value.aspectRatio,
+                child: Chewie(controller: _chewieController!),
+              )
+            else
+              Container(
+                height: estimatedImageHeight,
+                color: Colors.grey[300],
+                child: const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              ),
             const SizedBox(height: 12),
           ],
           InkWell(onTap: _showCommentsModal, child: _buildReactsSection()),

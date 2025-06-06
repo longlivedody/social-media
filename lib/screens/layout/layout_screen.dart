@@ -1,7 +1,5 @@
-import 'package:facebook_clone/models/video_model.dart';
 import 'package:facebook_clone/models/user_model.dart';
 import 'package:facebook_clone/screens/menu/menu_screen.dart';
-import 'package:facebook_clone/screens/reels/reels_screen.dart';
 import 'package:facebook_clone/widgets/custom_appbar.dart';
 import 'package:flutter/material.dart';
 
@@ -79,7 +77,7 @@ class LayoutScreen extends StatelessWidget {
     return TabBarView(
       children: [
         PostsScreen(user: user, authService: authService),
-        ReelsScreen(videos: sampleVideos),
+        const Center(child: Text('Reels Content')),
         const Center(child: Text('Notifications Content')),
         MenuScreen(user: user, authService: authService),
       ],

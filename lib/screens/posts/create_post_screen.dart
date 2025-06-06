@@ -3,16 +3,18 @@ import 'dart:io';
 import 'package:facebook_clone/services/auth_services/auth_service.dart';
 import 'package:facebook_clone/services/post_services/post_service.dart';
 import 'package:facebook_clone/utils/image_picker_utils.dart';
+import 'package:facebook_clone/utils/video_picker_utils.dart';
 import 'package:facebook_clone/utils/image_utils.dart';
 import 'package:facebook_clone/widgets/custom_button.dart';
 import 'package:facebook_clone/widgets/custom_icon_button.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:facebook_clone/widgets/custom_text_field.dart';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../consts/theme.dart';
 
-/// A screen that allows users to create a new post with text and optional image.
+/// A screen that allows users to create a new post with text and optional media.
 class CreatePostScreen extends StatefulWidget {
   final PostService postService;
   final String? photoURL;
@@ -32,12 +34,16 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   final _authService = AuthService();
 
   String? _postImageBase64;
+  String? _videoUrl;
+  File? _videoFile;
+  VideoPlayerController? _videoController;
   String? _errorMessage;
   bool _isLoading = false;
 
   @override
   void dispose() {
     _postController.dispose();
+    _videoController?.dispose();
     super.dispose();
   }
 
@@ -51,6 +57,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       final base64Image = ImagePickerUtils.getBase64Image(imageFile);
       setState(() {
         _postImageBase64 = base64Image;
+        _videoUrl = null;
+        _videoFile = null;
+        _videoController?.dispose();
+        _videoController = null;
         _errorMessage = null;
       });
     } catch (e) {
@@ -58,7 +68,30 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     }
   }
 
-  /// Creates a new post with the provided text and image
+  /// Picks a video from the gallery or camera
+  Future<void> _pickVideo() async {
+    try {
+      final File? videoFile =
+          await VideoPickerUtils.pickAndProcessVideo(context);
+      if (videoFile == null) return;
+
+      setState(() {
+        _videoFile = videoFile;
+        _videoUrl = videoFile.path;
+        _postImageBase64 = null;
+        _errorMessage = null;
+      });
+
+      // Initialize video controller for preview
+      _videoController = VideoPlayerController.file(videoFile);
+      await _videoController!.initialize();
+      setState(() {});
+    } catch (e) {
+      _setError('Failed to pick video: $e');
+    }
+  }
+
+  /// Creates a new post with the provided text and media
   Future<void> _createPost() async {
     if (!_validatePost()) return;
 
@@ -76,6 +109,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       await widget.postService.createPost(
         postText: _postController.text.trim(),
         postImageUrl: _postImageBase64,
+        videoUrl: _videoUrl,
         user: currentUser,
       );
 
@@ -93,8 +127,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   /// Validates the post content
   bool _validatePost() {
-    if (_postController.text.trim().isEmpty && _postImageBase64 == null) {
-      _setError('Please add some text or an image to your post');
+    if (_postController.text.trim().isEmpty &&
+        _postImageBase64 == null &&
+        _videoUrl == null) {
+      _setError('Please add some text, an image, or a video to your post');
       return false;
     }
     return true;
@@ -134,6 +170,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 _buildPostInput(),
                 const SizedBox(height: 20),
                 if (_postImageBase64 != null) _buildImagePreview(),
+                if (_videoUrl != null && _videoController != null)
+                  _buildVideoPreview(),
                 const SizedBox(height: 20),
                 _buildActionButtons(),
                 if (_errorMessage != null) _buildErrorMessage(),
@@ -224,25 +262,72 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     );
   }
 
-  Widget _buildActionButtons() {
-    return Container(
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 100.0),
-      child: CustomButton(
-        onPressed: _pickImage,
-        text: 'Add Photo',
-        icon: const Icon(Icons.photo_library),
-        style: ButtonStyle(
-          backgroundColor: WidgetStateProperty.all(Colors.transparent),
-          foregroundColor: WidgetStateProperty.all(
-            Theme.of(context).colorScheme.primary,
-          ),
-          side: WidgetStateProperty.all(
-            BorderSide(color: Theme.of(context).colorScheme.primary),
-          ),
-          minimumSize: WidgetStateProperty.all(const Size(120, 40)),
+  Widget _buildVideoPreview() {
+    if (_videoController == null || !_videoController!.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Stack(
+      children: [
+        AspectRatio(
+          aspectRatio: _videoController!.value.aspectRatio,
+          child: VideoPlayer(_videoController!),
         ),
-      ),
+        Positioned(
+          top: 8,
+          right: 8,
+          child: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white),
+            onPressed: () {
+              setState(() {
+                _videoUrl = null;
+                _videoFile = null;
+                _videoController?.dispose();
+                _videoController = null;
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        CustomButton(
+          onPressed: _pickImage,
+          text: 'Add Photo',
+          icon: const Icon(Icons.photo_library),
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.all(Colors.transparent),
+            foregroundColor: WidgetStateProperty.all(
+              Theme.of(context).colorScheme.primary,
+            ),
+            side: WidgetStateProperty.all(
+              BorderSide(color: Theme.of(context).colorScheme.primary),
+            ),
+            minimumSize: WidgetStateProperty.all(const Size(120, 40)),
+          ),
+        ),
+        const SizedBox(width: 16),
+        CustomButton(
+          onPressed: _pickVideo,
+          text: 'Add Video',
+          icon: const Icon(Icons.videocam),
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.all(Colors.transparent),
+            foregroundColor: WidgetStateProperty.all(
+              Theme.of(context).colorScheme.primary,
+            ),
+            side: WidgetStateProperty.all(
+              BorderSide(color: Theme.of(context).colorScheme.primary),
+            ),
+            minimumSize: WidgetStateProperty.all(const Size(120, 40)),
+          ),
+        ),
+      ],
     );
   }
 
