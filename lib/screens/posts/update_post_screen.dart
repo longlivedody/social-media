@@ -4,7 +4,6 @@ import 'package:facebook_clone/models/post_data_model.dart';
 import 'package:facebook_clone/services/auth_services/auth_service.dart';
 import 'package:facebook_clone/services/post_services/post_service.dart';
 import 'package:facebook_clone/utils/image_picker_utils.dart';
-import 'package:facebook_clone/utils/image_utils.dart';
 import 'package:facebook_clone/widgets/custom_button.dart';
 import 'package:facebook_clone/widgets/custom_icon_button.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
@@ -43,7 +42,8 @@ class _UpdatePostScreenState extends State<UpdatePostScreen> {
 
   void _initializePostData() {
     _textController.text = widget.post.postText;
-    _imageUrl = widget.post.postImageUrl;
+    // Note: PostDataModel doesn't have postImageUrl field
+    // We'll handle images in a future update
   }
 
   @override
@@ -54,8 +54,7 @@ class _UpdatePostScreenState extends State<UpdatePostScreen> {
 
   Future<void> _pickImage() async {
     try {
-      final File? imageFile =
-          await ImagePickerUtils.pickAndProcessImage(context);
+      final File? imageFile = await ImagePickerUtils.pickImageFromGallery();
       if (imageFile != null) {
         setState(() => _newImage = imageFile);
       }
@@ -79,23 +78,10 @@ class _UpdatePostScreenState extends State<UpdatePostScreen> {
       final user = await AuthService().currentUser;
       if (user == null) throw Exception('User not authenticated');
 
-      String finalImageUrl;
-      if (_newImage != null) {
-        // If there's a new image, convert it to base64
-        finalImageUrl = ImagePickerUtils.getBase64Image(_newImage!);
-      } else if (_imageUrl != null && _imageUrl!.isNotEmpty) {
-        // If there's an existing image URL, keep it
-        finalImageUrl = _imageUrl!;
-      } else {
-        // If no image is selected, use empty string
-        finalImageUrl = '';
-      }
-
       await _postService.updatePost(
         postId: widget.post.documentId,
         userId: user.uid,
         postText: _textController.text.trim(),
-        postImageUrl: finalImageUrl,
       );
 
       if (!mounted) return;
@@ -231,7 +217,7 @@ class _UpdatePostScreenState extends State<UpdatePostScreen> {
           child: Image(
             image: _newImage != null
                 ? FileImage(_newImage!)
-                : ImageUtils.getImageProvider(_imageUrl!),
+                : NetworkImage(_imageUrl ?? '') as ImageProvider,
             width: double.infinity,
             fit: BoxFit.cover,
             height: estimatedImageHeight,

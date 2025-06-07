@@ -1,17 +1,13 @@
 import 'package:facebook_clone/models/comments_model.dart';
 import 'package:facebook_clone/models/post_data_model.dart';
-import 'package:facebook_clone/services/auth_services/auth_service.dart'; // For AuthService
-import 'package:facebook_clone/services/post_services/post_service.dart'; // Your PostService
-import 'package:facebook_clone/utils/image_utils.dart';
-import 'package:facebook_clone/utils/video_utils.dart';
+import 'package:facebook_clone/models/user_model.dart';
+import 'package:facebook_clone/services/auth_services/auth_service.dart';
+import 'package:facebook_clone/services/post_services/post_service.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
-import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 
-import 'comments_modal_sheet.dart'; // Your comments modal
-import 'update_post_screen.dart'; // Import the UpdatePostScreen
+import 'comments_modal_sheet.dart';
+import 'update_post_screen.dart';
 
 class PostItem extends StatefulWidget {
   final PostDataModel postData;
@@ -29,27 +25,31 @@ class PostItem extends StatefulWidget {
 
 class _PostItemState extends State<PostItem> {
   final PostService _postService = PostService();
-  firebase_auth.User? _currentUser;
+  String? _currentUserUid;
+  User? _currentUser;
   Stream<List<CommentModel>>? _commentsListStream;
   Stream<int>? _likesCountStream;
   Stream<bool>? _userLikeStatusStream;
-  bool _isDeleting = false;
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
-  bool _isVideoInitialized = false;
-  bool _isInitializing = false;
 
   @override
   void initState() {
     super.initState();
+    _loadCurrentUser();
+    _initializeStreams();
+  }
 
-    _currentUser = firebase_auth.FirebaseAuth.instance.currentUser;
-
-    if (_currentUser == null) {
-      debugPrint(
-          "PostItem InitState: Current user is null. Functionality might be limited.");
+  Future<void> _loadCurrentUser() async {
+    final user = await AuthService().currentUser;
+    if (mounted) {
+      setState(() {
+        _currentUserUid = user?.uid;
+        _currentUser = user;
+        _updateLikeStatusStream();
+      });
     }
+  }
 
+  void _initializeStreams() {
     if (widget.postData.documentId.isNotEmpty) {
       debugPrint(
           "PostItem InitState: Initializing for documentId: ${widget.postData.documentId}");
@@ -57,95 +57,41 @@ class _PostItemState extends State<PostItem> {
           _postService.getCommentsForPost(widget.postData.documentId);
       _likesCountStream =
           _postService.getLikesCountForPost(widget.postData.documentId);
-      if (_currentUser != null) {
-        _userLikeStatusStream = _postService.hasUserLikedPost(
-          widget.postData.documentId,
-          _currentUser!.uid,
-        );
-      }
+      _updateLikeStatusStream();
     } else {
       debugPrint(
           "Error: PostItem received postData with empty documentId. Post ID (custom): ${widget.postData.postId}");
     }
-
-    // Initialize video if URL exists
-    if (widget.postData.videoUrl != null &&
-        widget.postData.videoUrl!.isNotEmpty) {
-      _initializeVideo();
-    }
   }
 
-  Future<void> _initializeVideo() async {
-    if (_isInitializing || _isVideoInitialized) return;
-
-    setState(() {
-      _isInitializing = true;
-    });
-
-    try {
-      if (_videoController != null) {
-        _videoController!.dispose();
-        _videoController = null;
-      }
-      if (_chewieController != null) {
-        _chewieController!.dispose();
-        _chewieController = null;
-      }
-
-      _videoController =
-          await VideoUtils.getVideoController(widget.postData.videoUrl!);
-      await _videoController!.initialize();
-
-      if (!mounted) return;
-
-      _chewieController = ChewieController(
-        videoPlayerController: _videoController!,
-        autoPlay: false,
-        looping: false,
-        aspectRatio: _videoController!.value.aspectRatio,
-        placeholder: Container(
-          color: Colors.grey[300],
-          child: const Center(
-            child: CircularProgressIndicator(),
-          ),
-        ),
+  void _updateLikeStatusStream() {
+    if (_currentUserUid != null && widget.postData.documentId.isNotEmpty) {
+      _userLikeStatusStream = _postService.hasUserLikedPost(
+        widget.postData.documentId,
+        _currentUserUid!,
       );
-
-      if (mounted) {
-        setState(() {
-          _isVideoInitialized = true;
-          _isInitializing = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error initializing video: $e');
-      if (mounted) {
-        setState(() {
-          _isInitializing = false;
-        });
-      }
     }
-  }
-
-  @override
-  void dispose() {
-    _videoController?.dispose();
-    _chewieController?.dispose();
-    super.dispose();
   }
 
   @override
   void didUpdateWidget(PostItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.postData.videoUrl != widget.postData.videoUrl) {
-      _isVideoInitialized = false;
-      _initializeVideo();
+    if (oldWidget.postData.documentId != widget.postData.documentId) {
+      _initializeStreams();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_currentUserUid != null) {
+      _updateLikeStatusStream();
     }
   }
 
   void _showCommentsModal() {
     debugPrint(
-        "_showCommentsModal called for post: ${widget.postData.documentId}");
+        "_showCommentsModal called for post: \\${widget.postData.documentId}");
     if (widget.postData.documentId.isEmpty) {
       debugPrint("Error: Post documentId is empty, cannot show comments.");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -155,7 +101,7 @@ class _PostItemState extends State<PostItem> {
       );
       return;
     }
-    if (_currentUser == null) {
+    if (_currentUserUid == null || _currentUser == null) {
       debugPrint("Error: Current user is null, cannot add comment.");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("You need to be logged in to comment.")),
@@ -168,21 +114,21 @@ class _PostItemState extends State<PostItem> {
       postId: widget.postData.documentId,
       onCommentSent: (commentText) {
         debugPrint("onCommentSent triggered with text: $commentText");
-        if (_currentUser != null) {
+        if (_currentUserUid != null && _currentUser != null) {
           _postService
               .addCommentToPost(
             postId: widget.postData.documentId,
             commentText: commentText,
-            commentingUserId: _currentUser!.uid,
-            commentingUserName: _currentUser!.displayName ?? "Anonymous",
-            commentingUserProfileImageUrl: widget.postData.profileImageUrl,
+            commentingUserId: _currentUserUid!,
+            commentingUserName: _currentUser!.displayName ?? 'Anonymous',
+            commentingUserProfileImageUrl: _currentUser!.photoURL ?? '',
           )
               .then((_) {
             debugPrint(
-                'Comment added successfully for post ${widget.postData.documentId}!');
+                'Comment added successfully for post \\${widget.postData.documentId}!');
           }).catchError((error) {
             debugPrint(
-                'Error adding comment for post ${widget.postData.documentId}: $error');
+                'Error adding comment for post \\${widget.postData.documentId}: $error');
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text("Failed to add comment: $error")),
@@ -221,7 +167,7 @@ class _PostItemState extends State<PostItem> {
   }
 
   Future<void> _handleDelete() async {
-    if (_currentUser == null) {
+    if (_currentUserUid == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You must be logged in to delete posts')),
       );
@@ -231,11 +177,10 @@ class _PostItemState extends State<PostItem> {
     final shouldDelete = await _showDeleteConfirmationDialog();
     if (shouldDelete != true) return;
 
-    setState(() => _isDeleting = true);
     try {
       await _postService.deletePost(
         postId: widget.postData.documentId,
-        userId: _currentUser!.uid,
+        userId: _currentUserUid!,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -249,15 +194,11 @@ class _PostItemState extends State<PostItem> {
           SnackBar(content: Text('Failed to delete post: $e')),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() => _isDeleting = false);
-      }
     }
   }
 
   Future<void> _handleUpdate() async {
-    if (_currentUser == null) {
+    if (_currentUserUid == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You must be logged in to update posts')),
       );
@@ -280,8 +221,6 @@ class _PostItemState extends State<PostItem> {
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final estimatedImageHeight = screenWidth * 0.8;
     final theme = Theme.of(context);
 
     if (widget.postData.documentId.isEmpty) {
@@ -299,28 +238,6 @@ class _PostItemState extends State<PostItem> {
       );
     }
 
-    if (_isDeleting) {
-      return Card(
-        margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(
-                  'Deleting post...',
-                  style: theme.textTheme.bodyLarge,
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10.0),
       child: Column(
@@ -330,6 +247,7 @@ class _PostItemState extends State<PostItem> {
             postData: widget.postData,
             onDelete: _handleDelete,
             onUpdate: _handleUpdate,
+            currentUserUid: _currentUserUid,
           ),
           const SizedBox(height: 12),
           if (widget.postData.postText.isNotEmpty) ...[
@@ -339,29 +257,45 @@ class _PostItemState extends State<PostItem> {
             ),
             const SizedBox(height: 12),
           ],
-          if (widget.postData.postImageUrl != null &&
-              widget.postData.postImageUrl!.isNotEmpty) ...[
-            _PostImage(
-              imageUrl: widget.postData.postImageUrl!,
-              height: estimatedImageHeight,
-            ),
-            const SizedBox(height: 12),
-          ],
-          if (widget.postData.videoUrl != null &&
-              widget.postData.videoUrl!.isNotEmpty) ...[
-            if (_isVideoInitialized && _chewieController != null)
-              AspectRatio(
-                aspectRatio: _videoController!.value.aspectRatio,
-                child: Chewie(controller: _chewieController!),
-              )
-            else
-              Container(
-                height: estimatedImageHeight,
-                color: Colors.grey[300],
-                child: const Center(
-                  child: CircularProgressIndicator(),
-                ),
+          if (widget.postData.postImageUrl != null) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                widget.postData.postImageUrl!,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Container(
+                    height: 200,
+                    width: double.infinity,
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                loadingProgress.expectedTotalBytes!
+                            : null,
+                      ),
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return Container(
+                    height: 200,
+                    width: double.infinity,
+                    color: theme.colorScheme.errorContainer,
+                    child: Center(
+                      child: Icon(
+                        Icons.error_outline,
+                        color: theme.colorScheme.error,
+                        size: 32,
+                      ),
+                    ),
+                  );
+                },
               ),
+            ),
             const SizedBox(height: 12),
           ],
           InkWell(onTap: _showCommentsModal, child: _buildReactsSection()),
@@ -449,14 +383,13 @@ class _PostItemState extends State<PostItem> {
 
         final IconData iconData =
             hasLiked ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined;
-        // Use blue color when liked, same as comment button when not liked
         final Color iconColor =
             hasLiked ? Colors.blue : theme.colorScheme.onSurface.withAlpha(150);
         final Color textColor =
             hasLiked ? Colors.blue : theme.colorScheme.onSurface.withAlpha(150);
 
         return TextButton.icon(
-          onPressed: _currentUser == null ? null : () => _handleLikeToggle(),
+          onPressed: _currentUserUid == null ? null : () => _handleLikeToggle(),
           icon: Icon(iconData, color: iconColor, size: 20),
           label: CustomText(
             'Like',
@@ -476,12 +409,12 @@ class _PostItemState extends State<PostItem> {
   }
 
   Future<void> _handleLikeToggle() async {
-    if (_currentUser == null) return;
+    if (_currentUserUid == null || _currentUser == null) return;
 
     try {
       await _postService.toggleLike(
         postId: widget.postData.documentId,
-        userId: _currentUser!.uid,
+        userId: _currentUserUid!,
         username: _currentUser!.displayName ?? 'Anonymous',
       );
     } catch (e) {
@@ -530,43 +463,33 @@ class _PostItemState extends State<PostItem> {
 
 // --- Helper Widgets ---
 
-class _PostUserSection extends StatefulWidget {
+class _PostUserSection extends StatelessWidget {
   final PostDataModel postData;
   final VoidCallback onDelete;
   final VoidCallback onUpdate;
+  final String? currentUserUid;
 
   const _PostUserSection({
     required this.postData,
     required this.onDelete,
     required this.onUpdate,
+    required this.currentUserUid,
   });
 
-  @override
-  State<_PostUserSection> createState() => _PostUserSectionState();
-}
+  String _getTimeAgo(DateTime dateTime) {
+    final now = DateTime.now().toUtc();
+    final postTime = dateTime.toUtc();
+    final difference = now.difference(postTime);
 
-class _PostUserSectionState extends State<_PostUserSection> {
-  String? _currentUserUid;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCurrentUser();
-  }
-
-  Future<void> _loadCurrentUser() async {
-    final user = await AuthService().currentUser;
-    if (mounted) {
-      setState(() => _currentUserUid = user?.uid);
+    // If the difference is negative (post time is in the future), return the actual time
+    if (difference.isNegative) {
+      final hour = postTime.hour;
+      final minute = postTime.minute;
+      final period = hour < 12 ? 'AM' : 'PM';
+      final hour12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+      return '${hour12.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
     }
-  }
 
-  String _getTimeAgo(DateTime? dateTime) {
-    if (dateTime == null) return '...';
-    final now = DateTime.now();
-    final difference = now.difference(dateTime);
-
-    if (difference.inSeconds < 5) return 'now';
     if (difference.inSeconds < 60) return '${difference.inSeconds}s';
     if (difference.inMinutes < 60) return '${difference.inMinutes}m';
     if (difference.inHours < 24) return '${difference.inHours}h';
@@ -578,18 +501,18 @@ class _PostUserSectionState extends State<_PostUserSection> {
   bool _isPostOwner(String? currentUserUid) {
     return currentUserUid != null &&
         currentUserUid.isNotEmpty &&
-        widget.postData.userId.isNotEmpty &&
-        currentUserUid == widget.postData.userId;
+        postData.userId.isNotEmpty &&
+        currentUserUid == postData.userId;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isOwner = _isPostOwner(_currentUserUid);
+    final isOwner = _isPostOwner(currentUserUid);
 
     return Row(
       children: [
-        _ProfileImage(imageUrl: widget.postData.profileImageUrl),
+        _ProfileImage(imageUrl: postData.profileImageUrl),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -598,7 +521,7 @@ class _PostUserSectionState extends State<_PostUserSection> {
               Row(
                 children: [
                   CustomText(
-                    widget.postData.username,
+                    postData.username,
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -606,7 +529,7 @@ class _PostUserSectionState extends State<_PostUserSection> {
                 ],
               ),
               CustomText(
-                _getTimeAgo(widget.postData.postTime.toDate()),
+                _getTimeAgo(postData.postTime),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurface.withAlpha(150),
                 ),
@@ -616,8 +539,8 @@ class _PostUserSectionState extends State<_PostUserSection> {
         ),
         if (isOwner)
           _PostOptionsMenu(
-            onDelete: widget.onDelete,
-            onUpdate: widget.onUpdate,
+            onDelete: onDelete,
+            onUpdate: onUpdate,
           ),
       ],
     );
@@ -637,70 +560,11 @@ class _ProfileImage extends StatelessWidget {
     return CircleAvatar(
       radius: 28,
       backgroundColor: theme.colorScheme.primaryContainer.withAlpha(100),
-      backgroundImage: hasImage ? ImageUtils.getImageProvider(imageUrl!) : null,
+      backgroundImage: hasImage ? NetworkImage(imageUrl!) : null,
       child: !hasImage
           ? Icon(Icons.person,
               size: 28, color: theme.colorScheme.onPrimaryContainer)
           : null,
-    );
-  }
-}
-
-class _PostImage extends StatelessWidget {
-  final String imageUrl;
-  final double height;
-
-  const _PostImage({required this.imageUrl, required this.height});
-
-  @override
-  Widget build(BuildContext context) {
-    if (imageUrl.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image(
-        image: ImageUtils.getImageProvider(imageUrl),
-        width: double.infinity,
-        fit: BoxFit.cover,
-        height: height,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Container(
-            width: double.infinity,
-            height: height,
-            color: theme.colorScheme.surfaceContainerHighest,
-            child: Center(
-              child: CircularProgressIndicator(
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
-                    : null,
-              ),
-            ),
-          );
-        },
-        errorBuilder: (context, error, stackTrace) {
-          debugPrint("Error loading post image ($imageUrl): $error");
-          return Container(
-            width: double.infinity,
-            height: height,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.broken_image_outlined,
-                    size: 40, color: theme.colorScheme.onErrorContainer),
-                const SizedBox(height: 8),
-                Text("Image failed to load",
-                    style: TextStyle(color: theme.colorScheme.onErrorContainer))
-              ],
-            ),
-          );
-        },
-      ),
     );
   }
 }

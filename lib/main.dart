@@ -1,33 +1,22 @@
 import 'package:facebook_clone/consts/theme.dart';
 import 'package:facebook_clone/screens/layout/splash_screen.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'firebase_options.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
-    // Initialize Firebase
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    // Initialize Supabase
+    const String databaseUrl = 'https://ikybwhywdnsrzvcbgrwj.supabase.co';
+    const String anonKey =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlreWJ3aHl3ZG5zcnp2Y2JncndqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDkyNDg5NDgsImV4cCI6MjA2NDgyNDk0OH0.oav7OQZVjc9Nvc4nJsFckyl0iz0EHIYn92bBbEF5DTk'; // Replace with your Supabase anon key
 
-    // Configure Firestore
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      sslEnabled: true,
-    );
-
-    // Test Firestore connection
-    await FirebaseFirestore.instance.collection('test').limit(1).get();
-    debugPrint('Firebase and Firestore initialized successfully');
+    await Supabase.initialize(url: databaseUrl, anonKey: anonKey);
+    debugPrint('Supabase initialized successfully');
   } catch (e) {
-    debugPrint('Failed to initialize Firebase: $e');
+    debugPrint('Failed to initialize Supabase: $e');
   }
 
   runApp(const MyApp());

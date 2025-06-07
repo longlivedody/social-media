@@ -1,38 +1,42 @@
-import 'dart:io';
+// ignore_for_file: unnecessary_null_comparison
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 import '../../models/user_model.dart';
-import '../../utils/image_picker_utils.dart';
 
 class AuthService {
-  final fb_auth.FirebaseAuth _firebaseAuth = fb_auth.FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final supabase.SupabaseClient _supabase = supabase.Supabase.instance.client;
+  static const String _storageBucket = 'profile-images';
 
-  static const String _usersCollection = 'users';
-  static const String _postsCollection = 'posts';
+  static const String _usersTable = 'users';
+  static const String _postsTable = 'posts';
 
-  Stream<User?> get authStateChanges => _firebaseAuth.authStateChanges().map(
-        (firebaseUser) =>
-            firebaseUser == null ? null : User.fromFirebaseUser(firebaseUser),
+  Stream<User?> get authStateChanges => _supabase.auth.onAuthStateChange.map(
+        (event) => event.session?.user == null
+            ? null
+            : User.fromSupabaseUser(event.session!.user),
       );
 
   Future<User?> get currentUser async {
-    final fbUser = _firebaseAuth.currentUser;
-    if (fbUser == null) return null;
+    final supabaseUser = _supabase.auth.currentUser;
+    if (supabaseUser == null) return null;
 
     try {
-      // Get user data from Firestore
-      final userDoc =
-          await _firestore.collection(_usersCollection).doc(fbUser.uid).get();
-      if (!userDoc.exists) {
-        return User.fromFirebaseUser(fbUser);
+      // Get user data from Supabase
+      final userData = await _supabase
+          .from(_usersTable)
+          .select()
+          .eq('id', supabaseUser.id)
+          .single();
+
+      if (userData == null) {
+        return User.fromSupabaseUser(supabaseUser);
       }
-      return User.fromFirestore(userDoc);
+      return User.fromSupabase(userData);
     } catch (error) {
-      debugPrint('Error getting user data from Firestore: $error');
-      return User.fromFirebaseUser(fbUser);
+      debugPrint('Error getting user data from Supabase: $error');
+      return User.fromSupabaseUser(supabaseUser);
     }
   }
 
@@ -42,44 +46,68 @@ class AuthService {
     String? displayName,
     File? profileImage,
   }) async {
-    try {
-      final userCredential = await _firebaseAuth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+    int retryCount = 0;
+    const maxRetries = 3;
+    const retryDelay = Duration(seconds: 2);
 
-      if (userCredential.user == null) {
-        throw Exception('Failed to create user account');
+    while (retryCount < maxRetries) {
+      try {
+        final response = await _supabase.auth.signUp(
+          email: email,
+          password: password,
+        );
+
+        if (response.user == null) {
+          throw Exception('Failed to create user account');
+        }
+
+        // Wait for the session to be established
+        await Future.delayed(const Duration(seconds: 1));
+
+        // رفع الصورة وتخزين الرابط
+        String? profileImageUrl;
+        if (profileImage != null) {
+          profileImageUrl = await _uploadProfileImage(
+            profileImage,
+            response.user!.id,
+          );
+        }
+
+        // إنشاء حساب المستخدم مع رابط الصورة
+        await _supabase.from(_usersTable).insert({
+          'id': response.user!.id,
+          'email': email,
+          'display_name': displayName,
+          'profile-image': profileImageUrl,
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+
+        await _supabase.auth.updateUser(
+          supabase.UserAttributes(
+            data: {
+              'display-name': displayName,
+              'profile-image': profileImageUrl,
+            },
+          ),
+        );
+
+        return User.fromSupabaseUser(response.user!);
+      } on supabase.AuthException catch (e) {
+        if (e.message.contains('For security purposes') &&
+            retryCount < maxRetries - 1) {
+          retryCount++;
+          await Future.delayed(retryDelay * retryCount);
+          continue;
+        }
+        _handleAuthException(e, 'sign up');
+        rethrow;
+      } catch (e) {
+        debugPrint('Unexpected error during sign up: $e');
+        rethrow;
       }
-
-      String? profileImageBase64;
-      if (profileImage != null) {
-        final processedImage =
-            await ImagePickerUtils.resizeImageIfNeeded(profileImage);
-        profileImageBase64 = ImagePickerUtils.getBase64Image(processedImage);
-      }
-
-      await _createUserProfile(
-        uid: userCredential.user!.uid,
-        email: email,
-        displayName: displayName,
-        profileImageBase64: profileImageBase64,
-      );
-
-      if (displayName != null && displayName.isNotEmpty) {
-        await userCredential.user!.updateDisplayName(displayName);
-      }
-
-      await userCredential.user!.reload();
-
-      return User.fromFirebaseUser(userCredential.user!);
-    } on fb_auth.FirebaseAuthException catch (e) {
-      _handleFirebaseAuthException(e, 'sign up');
-      rethrow;
-    } catch (e) {
-      debugPrint('Unexpected error during sign up: $e');
-      rethrow;
     }
+    throw Exception('Maximum retry attempts reached. Please try again later.');
   }
 
   Future<User> signInWithEmailAndPassword({
@@ -87,18 +115,33 @@ class AuthService {
     required String password,
   }) async {
     try {
-      final userCredential = await _firebaseAuth.signInWithEmailAndPassword(
+      final response = await _supabase.auth.signInWithPassword(
         email: email,
         password: password,
       );
 
-      if (userCredential.user == null) {
+      if (response.user == null) {
         throw Exception('Failed to sign in');
       }
 
-      return User.fromFirebaseUser(userCredential.user!);
-    } on fb_auth.FirebaseAuthException catch (e) {
-      _handleFirebaseAuthException(e, 'sign in');
+      // Fetch complete user data from users table
+      final userData = await _supabase
+          .from(_usersTable)
+          .select()
+          .eq('id', response.user!.id)
+          .single();
+
+      // If user data exists in the table, return complete user object
+      if (userData != null) {
+        debugPrint('User profile image URL: ${userData['profile-image']}');
+        debugPrint('Complete user data: $userData');
+        return User.fromSupabase(userData);
+      }
+
+      // Fallback to basic user data if not found in users table
+      return User.fromSupabaseUser(response.user!);
+    } on supabase.AuthException catch (e) {
+      _handleAuthException(e, 'sign in');
       rethrow;
     } catch (e) {
       debugPrint('Unexpected error during sign in: $e');
@@ -108,7 +151,7 @@ class AuthService {
 
   Future<void> signOut() async {
     try {
-      await _firebaseAuth.signOut();
+      await _supabase.auth.signOut();
     } catch (e) {
       debugPrint('Error signing out: $e');
       rethrow;
@@ -119,19 +162,17 @@ class AuthService {
     required String newPassword,
     required String oldPassword,
   }) async {
-    final fbUser = _firebaseAuth.currentUser;
-    if (fbUser == null) {
+    final supabaseUser = _supabase.auth.currentUser;
+    if (supabaseUser == null) {
       throw Exception('User not logged in. Cannot update password.');
     }
 
     try {
-      await signInWithEmailAndPassword(
-        email: fbUser.email!,
-        password: oldPassword,
+      await _supabase.auth.updateUser(
+        supabase.UserAttributes(password: newPassword),
       );
-      await fbUser.updatePassword(newPassword);
-    } on fb_auth.FirebaseAuthException catch (e) {
-      _handleFirebaseAuthException(e, 'update password');
+    } on supabase.AuthException catch (e) {
+      _handleAuthException(e, 'update password');
       rethrow;
     } catch (e) {
       debugPrint('Unexpected error updating password: $e');
@@ -143,37 +184,47 @@ class AuthService {
     String? displayName,
     File? profileImage,
   }) async {
-    final fbUser = _firebaseAuth.currentUser;
-    if (fbUser == null) {
+    final supabaseUser = _supabase.auth.currentUser;
+    if (supabaseUser == null) {
       throw Exception('User not logged in. Cannot update profile.');
     }
 
     try {
-      if (displayName != null) {
-        await fbUser.updateDisplayName(displayName);
-        await _updateUserProfile(
-          uid: fbUser.uid,
-          displayName: displayName,
-        );
-      }
-
+      String? profileImageUrl;
       if (profileImage != null) {
-        final processedImage =
-            await ImagePickerUtils.resizeImageIfNeeded(profileImage);
-        final profileImageBase64 =
-            ImagePickerUtils.getBase64Image(processedImage);
-
-        // await fbUser.updatePhotoURL(profileImageBase64);
-        await _updateUserProfile(
-          uid: fbUser.uid,
-          profileImageBase64: profileImageBase64,
+        profileImageUrl = await _uploadProfileImage(
+          profileImage,
+          supabaseUser.id,
         );
       }
 
-      await fbUser.reload();
-      return User.fromFirebaseUser(_firebaseAuth.currentUser!);
-    } on fb_auth.FirebaseAuthException catch (e) {
-      _handleFirebaseAuthException(e, 'update profile');
+      if (displayName != null || profileImageUrl != null) {
+        await _supabase.auth.updateUser(
+          supabase.UserAttributes(
+            data: {
+              if (displayName != null) 'display_name': displayName,
+              if (profileImageUrl != null) 'profile_image': profileImageUrl,
+            },
+          ),
+        );
+        await _updateUserProfile(
+          uid: supabaseUser.id,
+          displayName: displayName,
+          profileImageUrl: profileImageUrl,
+        );
+      }
+
+      // Fetch updated user data from the database
+      final userData = await _supabase
+          .from(_usersTable)
+          .select()
+          .eq('id', supabaseUser.id)
+          .single();
+
+      // Return complete user data including profile image
+      return User.fromSupabase(userData);
+    } on supabase.AuthException catch (e) {
+      _handleAuthException(e, 'update profile');
       rethrow;
     } catch (e) {
       debugPrint('Unexpected error updating profile: $e');
@@ -181,164 +232,139 @@ class AuthService {
     }
   }
 
-  Future<void> _createUserProfile({
-    required String uid,
-    required String email,
-    String? displayName,
-    String? profileImageBase64,
-  }) async {
+  Future<String> _uploadProfileImage(File imageFile, String userId) async {
     try {
-      final userData = {
-        'email': email,
-        'displayName': displayName,
-        'profileImage': profileImageBase64,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
+      final fileExt = imageFile.path.split('.').last;
+      final fileName = 'profile_$userId.$fileExt';
+      final filePath = '$userId/$fileName';
 
-      await _firestore.collection(_usersCollection).doc(uid).set(userData);
-    } on FirebaseException catch (e) {
-      throw Exception('Failed to create user profile: ${e.message}');
+      debugPrint('Uploading profile image to path: $filePath');
+
+      // اقرأ الصورة كـ bytes
+      final bytes = await imageFile.readAsBytes();
+
+      // ارفع الصورة إلى Supabase Storage
+      await _supabase.storage.from(_storageBucket).uploadBinary(
+            filePath,
+            bytes,
+            fileOptions: supabase.FileOptions(
+              cacheControl: '3600',
+              upsert: true,
+            ),
+          );
+
+      // Get the public URL
+      final imageUrl =
+          _supabase.storage.from(_storageBucket).getPublicUrl(filePath);
+
+      debugPrint('Profile image uploaded successfully. URL: $imageUrl');
+      return imageUrl;
+    } on supabase.StorageException catch (e) {
+      debugPrint('Storage error uploading profile image: ${e.message}');
+      if (e.message.contains('row-level security policy')) {
+        throw Exception(
+            'Unable to upload profile image. Please make sure you have the correct permissions and the storage bucket is properly configured.');
+      }
+      rethrow;
     } catch (e) {
-      throw Exception('Unexpected error while creating user profile: $e');
+      debugPrint('Error uploading profile image: $e');
+      rethrow;
     }
   }
 
-  /// Updates an existing user profile in Firestore.
   Future<void> _updateUserProfile({
     required String uid,
     String? displayName,
-    String? profileImageBase64,
+    String? profileImageUrl,
   }) async {
     try {
       final updates = <String, dynamic>{
-        'updatedAt': FieldValue.serverTimestamp(),
+        'updated_at': DateTime.now().toIso8601String(),
       };
 
       if (displayName != null) {
-        updates['displayName'] = displayName;
-        // Update display name across all user-related data
+        updates['display_name'] = displayName;
         await _updateDisplayNameAcrossCollections(uid, displayName);
       }
-      if (profileImageBase64 != null) {
-        updates['profileImage'] = profileImageBase64;
-        // Update profile image across all user-related data
-        await _updateProfileImageAcrossCollections(uid, profileImageBase64);
+      if (profileImageUrl != null) {
+        updates['profile_image'] = profileImageUrl;
+        await _updateProfileImageAcrossCollections(uid, profileImageUrl);
       }
 
-      await _firestore.collection(_usersCollection).doc(uid).update(updates);
-    } on FirebaseException catch (e) {
-      throw Exception('Failed to update user profile: ${e.message}');
+      await _supabase.from(_usersTable).update(updates).eq('id', uid);
     } catch (e) {
       throw Exception('Unexpected error while updating user profile: $e');
     }
   }
 
-  /// Updates the user's display name across all relevant collections in Firestore.
   Future<void> _updateDisplayNameAcrossCollections(
       String userId, String displayName) async {
     try {
-      final batch = _firestore.batch();
-
       // Update posts
-      final postsSnapshot = await _firestore
-          .collection(_postsCollection)
-          .where('userId', isEqualTo: userId)
-          .get();
+      await _supabase
+          .from(_postsTable)
+          .update({'username': displayName}).eq('user_id', userId);
 
-      for (var doc in postsSnapshot.docs) {
-        batch.update(doc.reference, {'username': displayName});
+      // Update comments
+      await _supabase
+          .from('comments')
+          .update({'username': displayName}).eq('user_id', userId);
 
-        // Update comments in subcollection
-        final commentsSnapshot = await doc.reference
-            .collection('comments')
-            .where('userId', isEqualTo: userId)
-            .get();
-
-        for (var commentDoc in commentsSnapshot.docs) {
-          batch.update(commentDoc.reference, {'username': displayName});
-        }
-
-        // Update likes in subcollection
-        final likesSnapshot = await doc.reference
-            .collection('likes')
-            .where('userId', isEqualTo: userId)
-            .get();
-
-        for (var likeDoc in likesSnapshot.docs) {
-          batch.update(likeDoc.reference, {'username': displayName});
-        }
-      }
-
-      await batch.commit();
+      // Update likes with better error handling
+      await _supabase
+          .from('likes')
+          .update({'username': displayName}).eq('user_id', userId);
     } catch (e) {
       debugPrint('Error updating display name in database: $e');
       rethrow;
     }
   }
 
-  /// Updates the user's profile image across all relevant collections in Firestore.
   Future<void> _updateProfileImageAcrossCollections(
-      String userId, String profileImageBase64) async {
+      String userId, String profileImageUrl) async {
     try {
-      final batch = _firestore.batch();
-
       // Update posts
-      final postsSnapshot = await _firestore
-          .collection(_postsCollection)
-          .where('userId', isEqualTo: userId)
-          .get();
+      await _supabase
+          .from(_postsTable)
+          .update({'profile_image_url': profileImageUrl}).eq('user_id', userId);
 
-      for (var doc in postsSnapshot.docs) {
-        batch.update(doc.reference, {'profileImageUrl': profileImageBase64});
-
-        // Update comments in subcollection
-        final commentsSnapshot = await doc.reference
-            .collection('comments')
-            .where('userId', isEqualTo: userId)
-            .get();
-
-        for (var commentDoc in commentsSnapshot.docs) {
-          batch.update(
-              commentDoc.reference, {'profileImageUrl': profileImageBase64});
-        }
-      }
-
-      await batch.commit();
+      // Update comments
+      await _supabase
+          .from('comments')
+          .update({'profile_image_url': profileImageUrl}).eq('user_id', userId);
     } catch (e) {
       debugPrint('Error updating profile image in database: $e');
       rethrow;
     }
   }
 
-  // --- Helper Methods ---
-  /// Handles Firebase Auth exceptions with appropriate error messages.
-  void _handleFirebaseAuthException(
-      fb_auth.FirebaseAuthException e, String operation) {
-    debugPrint(
-        'Firebase Auth Exception during $operation: ${e.message} (Code: ${e.code})');
+  void _handleAuthException(supabase.AuthException e, String operation) {
+    debugPrint('Auth Exception during $operation: ${e.message}');
 
-    switch (e.code) {
-      case 'user-not-found':
-        throw Exception('No user found with this email.');
-      case 'wrong-password':
-        throw Exception('Incorrect password.');
-      case 'email-already-in-use':
+    switch (e.message) {
+      case 'Invalid login credentials':
+        throw Exception('Invalid email or password.');
+      case 'Email not confirmed':
+        throw Exception('Please confirm your email address.');
+      case 'Email already registered':
         throw Exception('This email is already registered.');
-      case 'weak-password':
+      case 'Password should be at least 6 characters':
         throw Exception('The password is too weak.');
-      case 'invalid-email':
+      case 'Invalid email':
         throw Exception('The email address is invalid.');
-      case 'requires-recent-login':
-        throw Exception('Please sign in again to perform this action.');
-      case 'user-disabled':
-        throw Exception('This account has been disabled.');
-      case 'too-many-requests':
-        throw Exception('Too many attempts. Please try again later.');
-      case 'operation-not-allowed':
-        throw Exception('This operation is not allowed.');
-      case 'network-request-failed':
-        throw Exception('Network error. Please check your connection.');
+      case 'User not found':
+        throw Exception('No user found with this email.');
+      case 'Too many requests':
+        throw Exception(
+            'Too many attempts. Please wait a moment and try again.');
+      case String message when message.contains('For security purposes'):
+        final seconds = int.tryParse(message
+                .split(' ')
+                .lastWhere((word) => word.contains('seconds'))
+                .replaceAll('seconds', '')
+                .trim()) ??
+            48;
+        throw Exception('Please wait $seconds seconds before trying again.');
       default:
         throw Exception('Authentication error: ${e.message}');
     }

@@ -1,8 +1,7 @@
-import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 
 /// A model class representing a user in the application.
-/// This class wraps the Firebase User object and provides a clean interface
+/// This class wraps the Supabase User object and provides a clean interface
 /// for accessing user data throughout the app.
 class User {
   /// The unique identifier for the user
@@ -17,8 +16,6 @@ class User {
   /// The URL to the user's profile photo
   final String? photoURL;
 
-  /// Whether the user's email has been verified
-
   /// Creates a new User instance
   const User({
     required this.uid,
@@ -27,25 +24,23 @@ class User {
     this.photoURL,
   });
 
-  /// Creates a User instance from a Firebase User object
-  factory User.fromFirebaseUser(fb_auth.User firebaseUser) {
+  /// Creates a User instance from a Supabase User object
+  factory User.fromSupabaseUser(supabase.User supabaseUser) {
     return User(
-      uid: firebaseUser.uid,
-      displayName: firebaseUser.displayName,
-      email: firebaseUser.email,
-      photoURL: firebaseUser.photoURL,
+      uid: supabaseUser.id,
+      displayName: supabaseUser.userMetadata?['display_name'] as String?,
+      email: supabaseUser.email,
+      photoURL: supabaseUser.userMetadata?['profile-image'] as String?,
     );
   }
 
-  /// Creates a User instance from Firestore document data
-  factory User.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+  /// Creates a User instance from Supabase database data
+  factory User.fromSupabase(Map<String, dynamic> data) {
     return User(
-      uid: doc.id,
-      displayName: data['displayName'] as String?,
+      uid: data['id'] as String,
+      displayName: data['display_name'] as String?,
       email: data['email'] as String?,
-      photoURL:
-          data['profileImage'] as String?, // Get profileImage from Firestore
+      photoURL: data['profile-image'] as String?,
     );
   }
 
@@ -67,22 +62,25 @@ class User {
   /// Converts the User object to a Map for database storage
   Map<String, dynamic> toJson() {
     return {
-      'uid': uid,
-      'displayName': displayName,
+      'id': uid,
+      'display_name': displayName,
       'email': email,
-      'profileImage': photoURL, // Store as profileImage in Firestore
+      'profile-image': photoURL,
     };
   }
 
   /// Creates a User instance from a Map (typically from database)
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      uid: json['uid'] as String,
-      displayName: json['displayName'] as String?,
+      uid: json['id'] as String,
+      displayName: json['display_name'] as String?,
       email: json['email'] as String?,
-      photoURL: json['profileImage'] as String?, // Get profileImage from JSON
+      photoURL: json['profile-image'] as String?,
     );
   }
+
+  /// Getter for profile image (for compatibility)
+  String? get profileImage => photoURL;
 
   @override
   bool operator ==(Object other) =>
@@ -100,6 +98,6 @@ class User {
 
   @override
   String toString() {
-    return 'User(uid: $uid, displayName: $displayName, email: $email, photoURL: $photoURL)';
+    return 'User(uid: $uid, displayName: $displayName, email: $email, profile-image: $photoURL)';
   }
 }

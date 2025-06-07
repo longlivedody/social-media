@@ -29,9 +29,15 @@ class PostsScreen extends StatefulWidget {
 
 class _PostsScreenState extends State<PostsScreen>
     with AutomaticKeepAliveClientMixin {
-  // Use your actual PostService implementation
   final PostService _postService = PostService();
   bool _isRefreshing = false;
+  late final Stream<List<PostDataModel>> _postsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _postsStream = _postService.getPosts();
+  }
 
   void _navigateToCreatePost() async {
     final result = await Navigator.push(
@@ -89,7 +95,7 @@ class _PostsScreenState extends State<PostsScreen>
   /// Builds the main posts list with error handling and empty state
   Widget _buildPostsList() {
     return StreamBuilder<List<PostDataModel>>(
-      stream: _postService.getPosts(),
+      stream: _postsStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const _ShimmerList();

@@ -3,6 +3,7 @@ import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:facebook_clone/widgets/custom_text_field.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_services/auth_service.dart';
 import '../../utils/image_picker_utils.dart';
@@ -29,6 +30,7 @@ class _SignupScreenState extends State<SignupScreen> {
   final _confirmPasswordController = TextEditingController();
 
   bool _isLoading = false;
+  bool _isImageUploading = false;
   String? _errorMessage;
   File? _profileImage;
 
@@ -41,61 +43,115 @@ class _SignupScreenState extends State<SignupScreen> {
     super.dispose();
   }
 
+  /// Shows a dialog to select image source (camera or gallery)
+  Future<ImageSource?> _showImageSourceDialog() async {
+    return showDialog<ImageSource>(
+      context: context,
+      builder: (BuildContext context) => Dialog(
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.8,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Select Image Source',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Camera'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Gallery'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Handles profile image selection
   Future<void> _pickProfileImage() async {
-    final File? image = await ImagePickerUtils.pickAndProcessImage(context);
-    if (image != null) {
+    try {
       setState(() {
-        _profileImage = image;
+        _isImageUploading = true;
+      });
+
+      final ImageSource? source = await _showImageSourceDialog();
+      if (source == null) {
+        setState(() {
+          _isImageUploading = false;
+        });
+        return;
+      }
+
+      File? imageFile;
+      if (source == ImageSource.camera) {
+        imageFile = await ImagePickerUtils.pickImageFromCamera();
+      } else {
+        imageFile = await ImagePickerUtils.pickImageFromGallery();
+      }
+
+      if (imageFile == null) {
+        setState(() {
+          _isImageUploading = false;
+        });
+        return;
+      }
+
+      final int fileSize = await imageFile.length();
+
+      if (fileSize > 5 * 1024 * 1024) {
+        // 5MB limit
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Image size should be less than 5MB'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() {
+          _isImageUploading = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _profileImage = imageFile;
+        _isImageUploading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error selecting image: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() {
+        _isImageUploading = false;
       });
     }
   }
 
-  /// Builds the profile image selection widget
-  Widget _buildProfileImagePicker() {
-    return GestureDetector(
-      onTap: _pickProfileImage,
-      child: Container(
-        width: 120,
-        height: 120,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.grey[200],
-          border: Border.all(
-            color: Theme.of(context).primaryColor,
-            width: 2,
-          ),
-        ),
-        child: _profileImage != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(60),
-                child: Image.file(
-                  _profileImage!,
-                  width: 120,
-                  height: 120,
-                  fit: BoxFit.cover,
-                ),
-              )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.add_a_photo,
-                    size: 40,
-                    color: Colors.grey[600],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Add Photo',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-      ),
-    );
+  /// Validates the display name input
+  String? _validateDisplayName(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return null; // Display name is optional
+    }
+    if (value.length > 50) {
+      return 'Display name must be less than 50 characters';
+    }
+    return null;
   }
 
   /// Validates the email input
@@ -157,8 +213,14 @@ class _SignupScreenState extends State<SignupScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Signup failed: ${e.toString()}';
+        _errorMessage = e.toString().replaceAll('Exception: ', '');
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -175,6 +237,7 @@ class _SignupScreenState extends State<SignupScreen> {
         content: Text(
           'Signup successful! Welcome ${user.displayName ?? ''}!',
         ),
+        backgroundColor: Colors.green,
       ),
     );
   }
@@ -188,6 +251,57 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
+  /// Builds the profile image selection widget
+  Widget _buildProfileImagePicker() {
+    return GestureDetector(
+      onTap: _isImageUploading ? null : _pickProfileImage,
+      child: Container(
+        width: 120,
+        height: 120,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.grey[200],
+          border: Border.all(
+            color: Theme.of(context).primaryColor,
+            width: 2,
+          ),
+        ),
+        child: _isImageUploading
+            ? const Center(
+                child: CircularProgressIndicator(),
+              )
+            : _profileImage != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(60),
+                    child: Image.file(
+                      _profileImage!,
+                      width: 120,
+                      height: 120,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.add_a_photo,
+                        size: 40,
+                        color: Colors.grey[600],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Add Photo',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+      ),
+    );
+  }
+
   /// Builds the form fields
   Widget _buildFormFields() {
     return Column(
@@ -197,6 +311,7 @@ class _SignupScreenState extends State<SignupScreen> {
           labelText: 'Display Name (Optional)',
           prefixIcon: Icons.person_outline,
           textInputAction: TextInputAction.next,
+          validator: _validateDisplayName,
         ),
         const SizedBox(height: 16),
         CustomTextField(

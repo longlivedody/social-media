@@ -2,8 +2,8 @@ import 'package:facebook_clone/widgets/custom_icon_button.dart';
 import 'package:flutter/material.dart';
 import 'package:facebook_clone/services/post_services/post_service.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
+import 'package:shimmer/shimmer.dart';
 
-/// A screen that displays the list of users who liked a specific post.
 class LikesScreen extends StatelessWidget {
   final String postId;
   final PostService _postService = PostService();
@@ -40,7 +40,38 @@ class LikesScreen extends StatelessWidget {
           }
 
           if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            // Shimmer loading placeholder
+            return ListView.builder(
+              itemCount: 8,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Container(
+                          width: 120,
+                          height: 16,
+                          color: Colors.white,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
           }
 
           final likes = snapshot.data!;

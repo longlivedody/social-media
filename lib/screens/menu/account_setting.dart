@@ -6,7 +6,6 @@ import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:facebook_clone/widgets/custom_text_field.dart';
 import 'package:flutter/material.dart';
 import 'package:facebook_clone/utils/image_picker_utils.dart';
-import 'package:facebook_clone/utils/image_utils.dart';
 import 'package:shimmer/shimmer.dart';
 
 import '../../models/user_model.dart';
@@ -80,8 +79,7 @@ class _AccountSettingState extends State<AccountSetting> {
 
   Future<void> _pickProfileImage() async {
     try {
-      final File? imageFile =
-          await ImagePickerUtils.pickAndProcessImage(context);
+      final File? imageFile = await ImagePickerUtils.pickImageFromGallery();
       if (imageFile != null) {
         setState(() {
           _newProfileImage = imageFile;
@@ -215,16 +213,12 @@ class _AccountSettingState extends State<AccountSetting> {
       child: Stack(
         children: [
           CircleAvatar(
-            radius: 90,
-            backgroundColor: Colors.grey[300],
-            backgroundImage: _newProfileImage != null
-                ? FileImage(_newProfileImage!)
-                : (_currentUser.photoURL?.isNotEmpty ?? false)
-                    ? ImageUtils.getImageProvider(_currentUser.photoURL!)
-                    : null,
-            child: (_currentUser.photoURL?.isEmpty ?? true) &&
-                    _newProfileImage == null
-                ? const Icon(Icons.person, size: 50, color: Colors.white)
+            radius: 120,
+            backgroundImage: widget.user.photoURL != null
+                ? NetworkImage(widget.user.photoURL!)
+                : null,
+            child: widget.user.photoURL == null
+                ? Icon(Icons.person, size: 120, color: Colors.grey[400])
                 : null,
           ),
           Positioned(
@@ -301,7 +295,7 @@ class _AccountSettingState extends State<AccountSetting> {
       baseColor: Colors.grey[300]!,
       highlightColor: Colors.grey[100]!,
       child: CircleAvatar(
-        radius: 90,
+        radius: 120,
         backgroundColor: Colors.white,
       ),
     );

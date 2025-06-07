@@ -1,12 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class CommentModel {
   final String commentId; // Firestore document ID for the comment
   final String userId;
   final String username;
   final String profileImageUrl;
   final String commentText;
-  final Timestamp timestamp;
+  final DateTime timestamp;
 
   CommentModel({
     required this.commentId,
@@ -20,22 +18,22 @@ class CommentModel {
   // Not sending commentId to Firestore as it's the document's ID
   Map<String, dynamic> toMap() {
     return {
-      'userId': userId,
+      'user_id': userId,
       'username': username,
-      'profileImageUrl': profileImageUrl,
-      'commentText': commentText,
-      'timestamp': timestamp,
+      'profile_image_url': profileImageUrl,
+      'comment_text': commentText,
+      'created_at': timestamp.toIso8601String(),
     };
   }
 
   factory CommentModel.fromMap(Map<String, dynamic> map, String commentId) {
     return CommentModel(
       commentId: commentId,
-      userId: map['userId'] as String? ?? '',
+      userId: map['user_id'] as String? ?? '',
       username: map['username'] as String? ?? 'Anonymous',
-      profileImageUrl: map['profileImageUrl'] as String? ?? '',
-      commentText: map['commentText'] as String? ?? '',
-      timestamp: map['timestamp'] as Timestamp? ?? Timestamp.now(),
+      profileImageUrl: map['profile_image_url'] as String? ?? '',
+      commentText: map['comment_text'] as String? ?? '',
+      timestamp: DateTime.parse(map['created_at'] as String),
     );
   }
 }

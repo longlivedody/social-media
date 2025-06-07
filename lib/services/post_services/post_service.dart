@@ -1,27 +1,30 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+// ignore_for_file: unnecessary_null_comparison
+
+import 'dart:io';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 import 'package:facebook_clone/models/post_data_model.dart';
 import 'package:facebook_clone/models/comments_model.dart';
 import 'package:flutter/foundation.dart';
-
 import '../../models/user_model.dart';
 
-/// Service class for managing post-related operations in Firestore
+/// Service class for managing post-related operations in Supabase
 class PostService {
   // Constants
   static const int _maxRetries = 3;
   static const Duration _retryDelay = Duration(seconds: 1);
-  static const String _collection = 'posts';
-  static const String _commentsSubCollection = 'comments';
-  static const String _likesSubCollection = 'likes';
+  static const String _postsTable = 'posts';
+  static const String _commentsTable = 'comments';
+  static const String _likesTable = 'likes';
+  static const String _storageBucket = 'post-images';
 
-  // Firestore instance
-  final FirebaseFirestore _firestore;
+  // Supabase instance
+  final supabase.SupabaseClient _supabase;
 
   /// Creates a new instance of [PostService]
-  PostService({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+  PostService({supabase.SupabaseClient? supabaseClient})
+      : _supabase = supabaseClient ?? supabase.Supabase.instance.client;
 
-  /// Executes a Firestore operation with retry logic
+  /// Executes a Supabase operation with retry logic
   Future<T> _executeWithRetry<T>(Future<T> Function() operation) async {
     int retryCount = 0;
     while (retryCount < _maxRetries) {
@@ -39,47 +42,96 @@ class PostService {
     throw Exception('Operation failed after $_maxRetries attempts');
   }
 
+  Future<String> _uploadPostImage(File imageFile, String userId) async {
+    try {
+      final fileExt = imageFile.path.split('.').last;
+      final fileName = 'post_${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+      final filePath = '$userId/$fileName';
+
+      debugPrint('Uploading post image to path: $filePath');
+
+      // Upload the file to Supabase Storage
+      final response = await _supabase.storage.from(_storageBucket).upload(
+            filePath,
+            imageFile,
+            fileOptions: supabase.FileOptions(
+              cacheControl: '3600',
+              upsert: true,
+            ),
+          );
+
+      if (response == null) {
+        throw Exception('Failed to upload image to storage');
+      }
+
+      // Get the public URL
+      final imageUrl =
+          _supabase.storage.from(_storageBucket).getPublicUrl(filePath);
+
+      if (imageUrl == null || imageUrl.isEmpty) {
+        throw Exception('Failed to get public URL for uploaded image');
+      }
+
+      debugPrint('Post image uploaded successfully. URL: $imageUrl');
+      return '$filePath|$imageUrl'; // Return both path and URL
+    } on supabase.StorageException catch (e) {
+      debugPrint('Storage error uploading post image: [31m${e.message}[0m');
+      if (e.message.contains('row-level security policy')) {
+        throw Exception(
+            'Unable to upload post image. Please make sure you have the correct permissions and the storage bucket is properly configured.');
+      }
+      rethrow;
+    } catch (e) {
+      debugPrint('Error uploading post image: $e');
+      rethrow;
+    }
+  }
+
   Future<void> createPost({
     required String postText,
-    String? postImageUrl,
-    String? videoUrl,
     required User user,
+    File? imageFile,
   }) async {
-    if (postText.trim().isEmpty) {
-      throw ArgumentError('Post text cannot be empty');
+    if (postText.trim().isEmpty && imageFile == null) {
+      throw ArgumentError('Post must contain either text or an image');
     }
     if (user.uid.isEmpty) {
       throw ArgumentError('User ID cannot be empty');
     }
 
     await _executeWithRetry(() async {
-      final docRef = _firestore.collection(_collection).doc();
+      String? postImageUrl;
+      String? postImagePath;
+      if (imageFile != null) {
+        final imageData = await _uploadPostImage(imageFile, user.uid);
+        final parts = imageData.split('|');
+        postImagePath = parts[0];
+        postImageUrl = parts[1];
+      }
 
-      final post = PostDataModel(
-        postId: DateTime.now()
-            .millisecondsSinceEpoch, // Or use docRef.id if you prefer
-        username: user.displayName ?? 'Anonymous',
-        profileImageUrl: user.photoURL ?? '',
-        postText: postText.trim(),
-        postImageUrl: postImageUrl ?? '',
-        videoUrl: videoUrl,
-        postTime: Timestamp.now(),
-        sharesCount: 0,
-        userId: user.uid,
-        documentId: docRef.id,
-      );
+      final post = {
+        'user_id': user.uid,
+        'username': user.displayName ?? 'Anonymous',
+        'profile_image_url': user.photoURL ?? '',
+        'post_text': postText.trim(),
+        'post_image_url': postImageUrl,
+        'post_image_path': postImagePath, // Store the storage path
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+        'shares_count': 0,
+      };
 
-      await docRef.set(post.toMap());
+      await _supabase.from(_postsTable).insert(post);
     });
   }
 
   Stream<List<PostDataModel>> getPosts() {
     try {
-      return _firestore
-          .collection(_collection)
-          .orderBy('postTime', descending: true)
-          .snapshots()
-          .map((snapshot) => snapshot.docs.map(_mapDocumentToPost).toList());
+      return _supabase
+          .from(_postsTable)
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .map((events) => events.map(_mapToPost).toList());
     } catch (e) {
       debugPrint('Error getting posts: $e');
       rethrow;
@@ -87,13 +139,11 @@ class PostService {
   }
 
   Future<void> addCommentToPost({
-    required String postId, // This is the documentId of the post
+    required String postId,
     required String commentText,
-    // Change these parameters to accept the data directly
     required String commentingUserId,
-    String?
-        commentingUserName, // Can be nullable if display name might be missing
-    String? commentingUserProfileImageUrl, // Can be nullable
+    required String commentingUserName,
+    required String commentingUserProfileImageUrl,
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (commentText.trim().isEmpty) {
@@ -102,29 +152,28 @@ class PostService {
     if (commentingUserId.isEmpty) {
       throw ArgumentError('Commenting user ID cannot be empty');
     }
+    if (commentingUserName.trim().isEmpty) {
+      debugPrint('Commenting user name cannot be empty');
+    }
+    if (commentingUserProfileImageUrl.trim().isEmpty) {
+      debugPrint('Commenting user profile image URL cannot be empty');
+    }
 
     await _executeWithRetry(() async {
-      final postRef = _firestore.collection(_collection).doc(postId);
-      final commentRef =
-          postRef.collection(_commentsSubCollection).doc(); // New comment doc
+      final comment = {
+        'post_id': postId,
+        'user_id': commentingUserId,
+        'username': commentingUserName,
+        'profile_image_url': commentingUserProfileImageUrl,
+        'comment_text': commentText.trim(),
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
 
-      // Use the passed-in parameters directly
-      final newComment = CommentModel(
-        commentId: commentRef.id,
-        userId: commentingUserId,
-        username:
-            commentingUserName ?? 'Anonymous', // Use provided name or default
-        profileImageUrl:
-            commentingUserProfileImageUrl ?? '', // Use provided URL or default
-        commentText: commentText.trim(),
-        timestamp: Timestamp.now(),
-      );
-
-      await commentRef.set(newComment.toMap());
+      await _supabase.from(_commentsTable).insert(comment);
     });
   }
 
-  /// Toggles like status for a post
   Future<void> toggleLike({
     required String postId,
     required String userId,
@@ -132,94 +181,76 @@ class PostService {
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
+    if (username.trim().isEmpty) {
+      throw ArgumentError('Username cannot be empty');
+    }
 
     await _executeWithRetry(() async {
-      final likeRef = _firestore
-          .collection(_collection)
-          .doc(postId)
-          .collection(_likesSubCollection)
-          .doc(userId);
+      // Check if like exists using select() instead of single()
+      final likes = await _supabase
+          .from(_likesTable)
+          .select()
+          .eq('post_id', postId)
+          .eq('user_id', userId);
 
-      final likeDoc = await likeRef.get();
-
-      if (likeDoc.exists) {
-        // Unlike: Remove the like document
-        await likeRef.delete();
+      if (likes.isNotEmpty) {
+        // Unlike: Remove the like
+        await _supabase
+            .from(_likesTable)
+            .delete()
+            .eq('post_id', postId)
+            .eq('user_id', userId);
       } else {
-        // Like: Create a new like document
-        await likeRef.set({
-          'userId': userId,
+        // Like: Create a new like
+        await _supabase.from(_likesTable).insert({
+          'post_id': postId,
+          'user_id': userId,
           'username': username,
-          'timestamp': Timestamp.now(),
+          'created_at': DateTime.now().toIso8601String(),
         });
       }
     });
   }
 
-  /// Returns a stream of like status for a post and user
   Stream<bool> hasUserLikedPost(String postId, String userId) {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
 
-    return _firestore
-        .collection(_collection)
-        .doc(postId)
-        .collection(_likesSubCollection)
-        .doc(userId)
-        .snapshots()
-        .map((snapshot) => snapshot.exists);
+    return _supabase.from(_likesTable).stream(primaryKey: ['id']).map(
+        (events) => events.any(
+            (like) => like['post_id'] == postId && like['user_id'] == userId));
   }
 
-  /// Gets a stream of users who liked a post
   Stream<List<Map<String, dynamic>>> getLikesForPost(String postId) {
-    return _firestore
-        .collection(_collection)
-        .doc(postId)
-        .collection(_likesSubCollection)
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'userId': data['userId'],
-          'username': data['username'],
-          'timestamp': data['timestamp'],
-        };
-      }).toList();
-    });
+    return _supabase
+        .from(_likesTable)
+        .stream(primaryKey: ['id']).map((events) => events
+            .where((like) => like['post_id'] == postId)
+            .map((like) => {
+                  'userId': like['user_id'],
+                  'username': like['username'],
+                  'timestamp': DateTime.parse(like['created_at']),
+                })
+            .toList());
   }
 
   Stream<int> getLikesCountForPost(String postId) {
-    return _firestore
-        .collection(_collection)
-        .doc(postId)
-        .collection(_likesSubCollection)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.length);
+    return _supabase.from(_likesTable).stream(primaryKey: ['id']).map(
+        (events) => events.where((like) => like['post_id'] == postId).length);
   }
 
   Stream<List<CommentModel>> getCommentsForPost(String postId) {
-    return _firestore
-        .collection(_collection)
-        .doc(postId)
-        .collection(_commentsSubCollection)
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snapshot) {
-      return snapshot.docs
-          .map((doc) => CommentModel.fromMap(doc.data(), doc.id))
-          .toList();
-    });
+    return _supabase.from(_commentsTable).stream(primaryKey: ['id']).map(
+        (events) => events
+            .where((comment) => comment['post_id'] == postId)
+            .map((comment) => CommentModel.fromMap(comment, comment['id']))
+            .toList());
   }
 
-  PostDataModel _mapDocumentToPost(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-
-    return PostDataModel.fromMap(data, doc.id);
+  PostDataModel _mapToPost(Map<String, dynamic> data) {
+    return PostDataModel.fromMap(data, data['id']);
   }
 
-  /// Deletes a post and its associated data
   Future<void> deletePost({
     required String postId,
     required String userId,
@@ -228,44 +259,46 @@ class PostService {
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
 
     await _executeWithRetry(() async {
-      final postRef = _firestore.collection(_collection).doc(postId);
-      final postDoc = await postRef.get();
+      final post =
+          await _supabase.from(_postsTable).select().eq('id', postId).single();
 
-      if (!postDoc.exists) {
+      if (post == null) {
         throw Exception('Post not found');
       }
 
-      final postData = postDoc.data() as Map<String, dynamic>;
-      if (postData['userId'] != userId) {
+      if (post['user_id'] != userId) {
         throw Exception('Not authorized to delete this post');
       }
 
       // Delete all comments
-      final commentsRef = postRef.collection(_commentsSubCollection);
-      final commentsSnapshot = await commentsRef.get();
-      for (var doc in commentsSnapshot.docs) {
-        await doc.reference.delete();
-      }
+      await _supabase.from(_commentsTable).delete().eq('post_id', postId);
 
       // Delete all likes
-      final likesRef = postRef.collection(_likesSubCollection);
-      final likesSnapshot = await likesRef.get();
-      for (var doc in likesSnapshot.docs) {
-        await doc.reference.delete();
+      await _supabase.from(_likesTable).delete().eq('post_id', postId);
+
+      // Delete the post image from storage if it exists
+      final postImagePath = post['post_image_path'];
+      if (postImagePath != null && postImagePath.isNotEmpty) {
+        try {
+          debugPrint(
+              'Attempting to delete image at storage path: $postImagePath');
+          await _supabase.storage.from(_storageBucket).remove([postImagePath]);
+          debugPrint('Image deleted successfully from storage');
+        } catch (e) {
+          debugPrint('Failed to delete post image from storage: $e');
+          // Continue with post deletion even if image deletion fails
+        }
       }
 
-      // Delete the post document
-      await postRef.delete();
+      // Delete the post
+      await _supabase.from(_postsTable).delete().eq('id', postId);
     });
   }
 
-  /// Updates an existing post
   Future<void> updatePost({
     required String postId,
     required String userId,
     required String postText,
-    String? postImageUrl,
-    String? videoUrl,
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
@@ -274,32 +307,29 @@ class PostService {
     }
 
     await _executeWithRetry(() async {
-      final postRef = _firestore.collection(_collection).doc(postId);
-      final postDoc = await postRef.get();
+      final post =
+          await _supabase.from(_postsTable).select().eq('id', postId).single();
 
-      if (!postDoc.exists) {
+      if (post == null) {
         throw Exception('Post not found');
       }
 
-      final postData = postDoc.data() as Map<String, dynamic>;
-      if (postData['userId'] != userId) {
+      if (post['user_id'] != userId) {
         throw Exception('Not authorized to update this post');
       }
 
-      await postRef.update({
-        'postText': postText.trim(),
-        if (postImageUrl != null) 'postImageUrl': postImageUrl,
-        if (videoUrl != null) 'videoUrl': videoUrl,
-      });
+      await _supabase.from(_postsTable).update({
+        'post_text': postText.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', postId);
     });
   }
 
-  /// Updates an existing comment
   Future<void> updateComment({
     required String postId,
     required String commentId,
     required String newCommentText,
-    required String userId, // To verify ownership
+    required String userId,
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (commentId.isEmpty) throw ArgumentError('Comment ID cannot be empty');
@@ -309,57 +339,52 @@ class PostService {
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
 
     await _executeWithRetry(() async {
-      final commentRef = _firestore
-          .collection(_collection)
-          .doc(postId)
-          .collection(_commentsSubCollection)
-          .doc(commentId);
+      final comment = await _supabase
+          .from(_commentsTable)
+          .select()
+          .eq('id', commentId)
+          .single();
 
-      final commentDoc = await commentRef.get();
-      if (!commentDoc.exists) {
+      if (comment == null) {
         throw Exception('Comment not found');
       }
 
-      final commentData = commentDoc.data();
-      if (commentData?['userId'] != userId) {
+      if (comment['user_id'] != userId) {
         throw Exception('Not authorized to update this comment');
       }
 
-      await commentRef.update({
-        'commentText': newCommentText.trim(),
-        'updatedAt': Timestamp.now(),
-      });
+      await _supabase.from(_commentsTable).update({
+        'comment_text': newCommentText.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', commentId);
     });
   }
 
-  /// Deletes a comment
   Future<void> deleteComment({
     required String postId,
     required String commentId,
-    required String userId, // To verify ownership
+    required String userId,
   }) async {
     if (postId.isEmpty) throw ArgumentError('Post ID cannot be empty');
     if (commentId.isEmpty) throw ArgumentError('Comment ID cannot be empty');
     if (userId.isEmpty) throw ArgumentError('User ID cannot be empty');
 
     await _executeWithRetry(() async {
-      final commentRef = _firestore
-          .collection(_collection)
-          .doc(postId)
-          .collection(_commentsSubCollection)
-          .doc(commentId);
+      final comment = await _supabase
+          .from(_commentsTable)
+          .select()
+          .eq('id', commentId)
+          .single();
 
-      final commentDoc = await commentRef.get();
-      if (!commentDoc.exists) {
+      if (comment == null) {
         throw Exception('Comment not found');
       }
 
-      final commentData = commentDoc.data();
-      if (commentData?['userId'] != userId) {
+      if (comment['user_id'] != userId) {
         throw Exception('Not authorized to delete this comment');
       }
 
-      await commentRef.delete();
+      await _supabase.from(_commentsTable).delete().eq('id', commentId);
     });
   }
 }

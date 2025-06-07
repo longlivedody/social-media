@@ -80,8 +80,8 @@ class _MenuScreenState extends State<MenuScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => AccountSetting(
-          user: widget.user,
           authService: widget.authService,
+          user: widget.user,
         ),
       ),
     );

@@ -3,10 +3,10 @@ import 'package:facebook_clone/models/user_model.dart';
 import 'package:facebook_clone/screens/posts/likes_screen.dart';
 import 'package:facebook_clone/services/auth_services/auth_service.dart';
 import 'package:facebook_clone/services/post_services/post_service.dart';
-import 'package:facebook_clone/utils/image_utils.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:facebook_clone/widgets/custom_text_field.dart';
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 
 /// Shows a modal bottom sheet containing comments for a specific post
 void showCommentsModal({
@@ -140,7 +140,7 @@ class _CommentsList extends StatelessWidget {
         }
 
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          return const CommentsShimmer();
         }
 
         final comments = snapshot.data!;
@@ -313,7 +313,7 @@ class _CommentItemState extends State<_CommentItem> {
                   ),
                 const SizedBox(height: 4),
                 CustomText(
-                  _getTimeAgo(widget.comment.timestamp.toDate()),
+                  _getTimeAgo(widget.comment.timestamp),
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey[600],
@@ -363,8 +363,7 @@ class _UserAvatar extends StatelessWidget {
     return CircleAvatar(
       radius: 25,
       backgroundColor: Colors.grey[300],
-      backgroundImage:
-          imageUrl.isNotEmpty ? ImageUtils.getImageProvider(imageUrl) : null,
+      backgroundImage: imageUrl.isNotEmpty ? NetworkImage(imageUrl) : null,
       child: imageUrl.isEmpty
           ? const Icon(
               Icons.person,
@@ -525,6 +524,68 @@ class _PostStats extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class CommentsShimmer extends StatelessWidget {
+  const CommentsShimmer({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      itemCount: 5,
+      separatorBuilder: (_, __) => const Divider(),
+      itemBuilder: (context, index) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 10.0),
+        child: Row(
+          children: [
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child:
+                  const CircleAvatar(radius: 25, backgroundColor: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      height: 16,
+                      width: 100,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      height: 14,
+                      width: double.infinity,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      height: 12,
+                      width: 60,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

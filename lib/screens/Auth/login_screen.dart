@@ -4,11 +4,9 @@ import 'package:facebook_clone/services/auth_services/auth_service.dart';
 import 'package:facebook_clone/widgets/custom_button.dart';
 import 'package:facebook_clone/widgets/custom_text.dart';
 import 'package:facebook_clone/widgets/custom_text_field.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class LoginScreen extends StatefulWidget {
-  // Add this parameter
   final AuthService authService;
 
   const LoginScreen({super.key, required this.authService});
@@ -34,11 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signIn() async {
-    // Access authService from the widget instance
     final authService = widget.authService;
-
-    // IMPORTANT: Get the user *after* successful sign-in
-    // final user = authService.currentUser; // MOVE THIS LINE
 
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
@@ -50,78 +44,31 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // Use the passed-in authService
       final user = await authService.signInWithEmailAndPassword(
-        // Capture the returned user
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
-      // Check if sign-in was successful and a user object was returned
       if (mounted) {
-        // Add mounted check before navigation
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (context) => LayoutScreen(
               user: user,
               authService: authService,
-            ), // Pass the signed-in user
+            ),
           ),
         );
-      } else if (mounted) {
-        // Handle case where signInWithEmailAndPassword returns null but no exception
-        // This might not happen with your current AuthService setup if it always rethrows
-        // or returns a user, but it's good practice.
-        setState(() {
-          _errorMessage = 'Login failed. Please try again.';
-          _isLoading = false; // Ensure loading is stopped
-        });
       }
-      // If navigation occurs, _isLoading will be handled by the widget being disposed.
-      // If not, it's handled in finally or the else block above.
-    } on FirebaseAuthException catch (e) {
-      String message;
-      switch (e.code) {
-        case 'user-not-found':
-          message = 'No user found for that email.';
-          break;
-        case 'wrong-password':
-          message = 'Wrong password provided for that user.';
-          break;
-        case 'invalid-email':
-          message = 'The email address is not valid.';
-          break;
-        case 'user-disabled':
-          message = 'This user account has been disabled.';
-          break;
-        case 'too-many-requests':
-          message = 'Too many login attempts. Please try again later.';
-          break;
-        case 'network-request-failed':
-          message =
-              'Network error. Please check your connection and try again.';
-          break;
-        default:
-          message = 'An unexpected error occurred. Please try again.';
-      }
-      if (mounted) {
-        setState(() {
-          _errorMessage = message;
-        });
-      }
-      debugPrint(
-        "Sign in failed with FirebaseAuthException: ${e.code} - ${e.message}",
-      );
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'An unexpected error occurred. Please try again.';
+          _errorMessage = e.toString().replaceAll('Exception: ', '');
+          _isLoading = false;
         });
       }
-      debugPrint("Sign in failed with general error: $e");
+      debugPrint("Sign in failed: $e");
     } finally {
       if (mounted && _isLoading) {
-        // Only set if still loading (i.e., navigation didn't happen)
         setState(() {
           _isLoading = false;
         });
@@ -131,7 +78,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Access authService from the widget instance for SignupScreen navigation
     final authService = widget.authService;
 
     return Scaffold(
@@ -223,7 +169,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               Navigator.of(context).pushReplacement(
                                 MaterialPageRoute(
                                   builder: (context) {
-                                    // Pass the authService instance here
                                     return SignupScreen(
                                       authService: authService,
                                     );
